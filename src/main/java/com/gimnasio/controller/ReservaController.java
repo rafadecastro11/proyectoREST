@@ -23,45 +23,93 @@ public class ReservaController {
 
     @PostMapping("/reservas")
     public ResponseEntity<String> crearReserva(@RequestBody Reserva reserva) {
-        String sql = "INSERT INTO reservas (id_clase, socio, fecha) VALUES (?, ?, ?)";
-        try (Connection conn = getConnection();
-             PreparedStatement stmt = conn.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
+        String sqlPlazas = "SELECT plazas FROM clases WHERE id = ?";
+        String sqlUpdatePlazas = "UPDATE clases SET plazas = plazas - 1 WHERE id = ? AND plazas > 0";
+        String sqlInsert = "INSERT INTO reservas (id_clase, socio, fecha) VALUES (?, ?, ?)";
 
-            stmt.setInt(1, reserva.getIdClase());
-            stmt.setString(2, reserva.getSocio());
-            stmt.setDate(3, Date.valueOf(reserva.getFecha()));
-            stmt.executeUpdate();
+        try (Connection conn = getConnection()) {
 
-            try (ResultSet rs = stmt.getGeneratedKeys()) {
-                if (rs.next()) {
-                    return ResponseEntity.status(HttpStatus.CREATED)
-                            .body("Reserva creada con ID: " + rs.getInt(1));
+            int idClase = reserva.getIdClase();
+
+            try (PreparedStatement stmtPlazas = conn.prepareStatement(sqlPlazas)) {
+                stmtPlazas.setInt(1, idClase);
+                try (ResultSet rs = stmtPlazas.executeQuery()) {
+                    if (!rs.next()) {
+                        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                                .body("La clase con ID " + idClase + " no existe");
+                    }
+                    int plazas = rs.getInt("plazas");
+
+                    if (plazas <= 0) {
+                        return ResponseEntity.status(HttpStatus.CONFLICT)
+                                .body("Aforo completo para la clase con ID " + idClase);
+                    }
                 }
             }
-            return ResponseEntity.status(HttpStatus.CREATED).body("Reserva creada");
+
+            try (PreparedStatement stmtUpdate = conn.prepareStatement(sqlUpdatePlazas)) {
+                stmtUpdate.setInt(1, idClase);
+                int actualizadas = stmtUpdate.executeUpdate();
+
+                if (actualizadas == 0) {
+                    return ResponseEntity.status(HttpStatus.CONFLICT)
+                            .body("Aforo completo para la clase con ID " + idClase);
+                }
+            }
+
+            try (PreparedStatement stmtInsert = conn.prepareStatement(sqlInsert, Statement.RETURN_GENERATED_KEYS)) {
+                stmtInsert.setInt(1, idClase);
+                stmtInsert.setString(2, reserva.getSocio());
+                stmtInsert.setDate(3, Date.valueOf(reserva.getFecha()));
+                stmtInsert.executeUpdate();
+
+                try (ResultSet rsInsert = stmtInsert.getGeneratedKeys()) {
+                    if (rsInsert.next()) {
+                        return ResponseEntity.status(HttpStatus.CREATED)
+                                .body("Reserva creada con ID: " + rsInsert.getInt(1));
+                    }
+                }
+                return ResponseEntity.status(HttpStatus.CREATED).body("Reserva creada");
+            }
 
         } catch (SQLException e) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body("Error al crear reserva: " + e.getMessage());
         }
     }
 
     @DeleteMapping("/reservas/{id}")
     public ResponseEntity<String> borrarReserva(@PathVariable int id) {
-        String sql = "DELETE FROM reservas WHERE id = ?";
+        String sqlReserva = "SELECT id_clase FROM reservas WHERE id = ?";
+        String sqlDelete = "DELETE FROM reservas WHERE id = ?";
+        String sqlUpdatePlazas = "UPDATE clases SET plazas = plazas + 1 WHERE id = ?";
+
         try (Connection conn = getConnection();
-             PreparedStatement stmt = conn.prepareStatement(sql)) {
+             PreparedStatement stmtReserva = conn.prepareStatement(sqlReserva)) {
 
-            stmt.setInt(1, id);
-            int affected = stmt.executeUpdate();
+            stmtReserva.setInt(1, id);
+            int idClase;
 
-            if (affected > 0) {
-                return ResponseEntity.status(HttpStatus.OK)
-                        .body("Reserva con ID " + id + " eliminada");
-            } else {
-                return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                        .body("No se encontro reserva con ID: " + id);
+            try (ResultSet rs = stmtReserva.executeQuery()) {
+                if (!rs.next()) {
+                    return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                            .body("No se encontro reserva con ID: " + id);
+                }
+                idClase = rs.getInt("id_clase");
             }
+
+            try (PreparedStatement stmtDelete = conn.prepareStatement(sqlDelete)) {
+                stmtDelete.setInt(1, id);
+                stmtDelete.executeUpdate();
+            }
+
+            try (PreparedStatement stmtUpdate = conn.prepareStatement(sqlUpdatePlazas)) {
+                stmtUpdate.setInt(1, idClase);
+                stmtUpdate.executeUpdate();
+            }
+
+            return ResponseEntity.status(HttpStatus.OK)
+                    .body("Reserva con ID " + id + " eliminada, plaza liberada");
 
         } catch (SQLException e) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND)
@@ -71,7 +119,7 @@ public class ReservaController {
 
     @GetMapping("/clases/{id}/reservas")
     public ResponseEntity<String> listarSocios(@PathVariable int id) {
-        String sql = "SELECT socio, fecha FROM reservas WHERE id_clase = ? ORDER BY socio";
+        String sql = "SELECT id, socio, fecha FROM reservas WHERE id_clase = ? ORDER BY id";
         List<String> socios = new ArrayList<>();
 
         try (Connection conn = getConnection();
