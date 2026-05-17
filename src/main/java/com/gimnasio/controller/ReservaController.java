@@ -7,8 +7,11 @@ import org.springframework.web.bind.annotation.*;
 
 import java.sql.*;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
+@CrossOrigin(origins = "*")
 @RestController
 @RequestMapping
 public class ReservaController {
@@ -117,6 +120,37 @@ public class ReservaController {
         }
     }
 
+    @GetMapping("/reservas/buscar")
+    public ResponseEntity<List<Map<String, Object>>> buscarReservas(@RequestParam String q) {
+        String sql = "SELECT r.id, r.socio, r.fecha, c.nombre AS nombre_clase "
+                   + "FROM reservas r JOIN clases c ON r.id_clase = c.id "
+                   + "WHERE r.socio ILIKE ? OR c.nombre ILIKE ? ORDER BY r.id";
+
+        try (Connection conn = getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+
+            String like = "%" + q + "%";
+            stmt.setString(1, like);
+            stmt.setString(2, like);
+
+            try (ResultSet rs = stmt.executeQuery()) {
+                List<Map<String, Object>> resultados = new ArrayList<>();
+                while (rs.next()) {
+                    Map<String, Object> item = new HashMap<>();
+                    item.put("id", rs.getInt("id"));
+                    item.put("socio", rs.getString("socio"));
+                    item.put("fecha", rs.getDate("fecha").toString());
+                    item.put("nombre_clase", rs.getString("nombre_clase"));
+                    resultados.add(item);
+                }
+                return ResponseEntity.ok(resultados);
+            }
+
+        } catch (SQLException e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(null);
+        }
+    }
+
     @GetMapping("/clases/{id}/reservas")
     public ResponseEntity<String> listarSocios(@PathVariable int id) {
         String sql = "SELECT id, socio, fecha FROM reservas WHERE id_clase = ? ORDER BY id";
@@ -128,7 +162,8 @@ public class ReservaController {
             stmt.setInt(1, id);
             try (ResultSet rs = stmt.executeQuery()) {
                 while (rs.next()) {
-                    socios.add("Socio: " + rs.getString("socio")
+                    socios.add("ID: " + rs.getInt("id")
+                            + ", Socio: " + rs.getString("socio")
                             + ", Fecha: " + rs.getDate("fecha"));
                 }
             }
