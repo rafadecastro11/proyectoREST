@@ -120,9 +120,70 @@ public class ReservaController {
         }
     }
 
+    @PutMapping("/reservas/{id}")
+    public ResponseEntity<String> modificarReserva(@PathVariable int id, @RequestBody Reserva reserva) {
+        String sqlReserva = "SELECT id_clase FROM reservas WHERE id = ?";
+        String sqlUpdate = "UPDATE reservas SET id_clase = ?, socio = ?, fecha = ? WHERE id = ?";
+        String sqlIncrement = "UPDATE clases SET plazas = plazas + 1 WHERE id = ?";
+        String sqlDecrement = "UPDATE clases SET plazas = plazas - 1 WHERE id = ? AND plazas > 0";
+        String sqlCheckClass = "SELECT plazas FROM clases WHERE id = ?";
+
+        try (Connection conn = getConnection()) {
+            int idClaseAntigua;
+            try (PreparedStatement stmt = conn.prepareStatement(sqlReserva)) {
+                stmt.setInt(1, id);
+                try (ResultSet rs = stmt.executeQuery()) {
+                    if (!rs.next())
+                        return ResponseEntity.status(HttpStatus.NOT_FOUND).body("No se encontró reserva con ID: " + id);
+                    idClaseAntigua = rs.getInt("id_clase");
+                }
+            }
+
+            int idClaseNueva = reserva.getIdClase();
+
+            if (idClaseAntigua != idClaseNueva) {
+                try (PreparedStatement stmt = conn.prepareStatement(sqlCheckClass)) {
+                    stmt.setInt(1, idClaseNueva);
+                    try (ResultSet rs = stmt.executeQuery()) {
+                        if (!rs.next())
+                            return ResponseEntity.status(HttpStatus.NOT_FOUND).body("La clase con ID " + idClaseNueva + " no existe");
+                        if (rs.getInt("plazas") <= 0)
+                            return ResponseEntity.status(HttpStatus.CONFLICT).body("Aforo completo para la clase con ID " + idClaseNueva);
+                    }
+                }
+                try (PreparedStatement stmt = conn.prepareStatement(sqlIncrement)) {
+                    stmt.setInt(1, idClaseAntigua);
+                    stmt.executeUpdate();
+                }
+                try (PreparedStatement stmt = conn.prepareStatement(sqlDecrement)) {
+                    stmt.setInt(1, idClaseNueva);
+                    if (stmt.executeUpdate() == 0) {
+                        try (PreparedStatement revert = conn.prepareStatement("UPDATE clases SET plazas = plazas - 1 WHERE id = ?")) {
+                            revert.setInt(1, idClaseAntigua);
+                            revert.executeUpdate();
+                        }
+                        return ResponseEntity.status(HttpStatus.CONFLICT).body("Aforo completo para la clase con ID " + idClaseNueva);
+                    }
+                }
+            }
+
+            try (PreparedStatement stmt = conn.prepareStatement(sqlUpdate)) {
+                stmt.setInt(1, idClaseNueva);
+                stmt.setString(2, reserva.getSocio());
+                stmt.setDate(3, Date.valueOf(reserva.getFecha()));
+                stmt.setInt(4, id);
+                stmt.executeUpdate();
+            }
+
+            return ResponseEntity.ok("Reserva con ID " + id + " modificada correctamente");
+        } catch (SQLException e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Error al modificar reserva: " + e.getMessage());
+        }
+    }
+
     @GetMapping("/reservas/buscar")
     public ResponseEntity<List<Map<String, Object>>> buscarReservas(@RequestParam String q) {
-        String sql = "SELECT r.id, r.socio, r.fecha, c.nombre AS nombre_clase "
+        String sql = "SELECT r.id, r.id_clase, r.socio, r.fecha, c.nombre AS nombre_clase "
                    + "FROM reservas r JOIN clases c ON r.id_clase = c.id "
                    + "WHERE r.socio ILIKE ? OR c.nombre ILIKE ? ORDER BY r.id";
 
@@ -138,6 +199,7 @@ public class ReservaController {
                 while (rs.next()) {
                     Map<String, Object> item = new HashMap<>();
                     item.put("id", rs.getInt("id"));
+                    item.put("id_clase", rs.getInt("id_clase"));
                     item.put("socio", rs.getString("socio"));
                     item.put("fecha", rs.getDate("fecha").toString());
                     item.put("nombre_clase", rs.getString("nombre_clase"));

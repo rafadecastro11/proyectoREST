@@ -45,6 +45,8 @@ document.getElementById('formReserva').addEventListener('submit', async function
     }
 });
 
+let ultimosResultados = [];
+
 async function buscarReservas() {
     const q = document.getElementById('inputBusqueda').value.trim();
     if (!q) {
@@ -62,6 +64,7 @@ async function buscarReservas() {
             return;
         }
         const datos = await res.json();
+        ultimosResultados = datos;
         if (datos.length === 0) {
             emptyState.classList.remove('d-none');
             return;
@@ -73,6 +76,7 @@ async function buscarReservas() {
                 '<td>' + item.socio + '</td>' +
                 '<td>' + item.nombre_clase + '</td>' +
                 '<td>' + item.fecha + '</td>' +
+                '<td class="text-center"><button class="btn btn-warning btn-sm" onclick="editarReserva(' + item.id + ')"><i class="fas fa-edit"></i></button></td>' +
                 '<td class="text-center"><button class="btn btn-danger btn-sm" onclick="eliminarReserva(' + item.id + ')"><i class="fas fa-trash"></i></button></td>';
             tbody.appendChild(tr);
         });
@@ -80,6 +84,51 @@ async function buscarReservas() {
         mostrarAlerta('Error de conexión: ' + err.message, 'danger');
     }
 }
+
+function editarReserva(id) {
+    const item = ultimosResultados.find(function(r) { return r.id === id; });
+    if (!item) {
+        mostrarAlerta('No se encontraron datos de la reserva.', 'danger');
+        return;
+    }
+    document.getElementById('edit_id').value = item.id;
+    document.getElementById('edit_id_clase').value = item.id_clase;
+    document.getElementById('edit_socio').value = item.socio;
+    document.getElementById('edit_fecha').value = item.fecha;
+    const modal = new bootstrap.Modal(document.getElementById('modalEditar'));
+    modal.show();
+}
+
+document.getElementById('formEditar').addEventListener('submit', async function (e) {
+    e.preventDefault();
+    const id = parseInt(document.getElementById('edit_id').value);
+    const payload = {
+        id_clase: parseInt(document.getElementById('edit_id_clase').value),
+        socio: document.getElementById('edit_socio').value.trim(),
+        fecha: document.getElementById('edit_fecha').value
+    };
+    if (!payload.id_clase || !payload.socio || !payload.fecha) {
+        mostrarAlerta('Todos los campos son obligatorios.', 'warning');
+        return;
+    }
+    try {
+        const res = await fetch(API_BASE + '/reservas/' + id, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        const texto = await res.text();
+        if (res.ok) {
+            mostrarAlerta(texto, 'success');
+            bootstrap.Modal.getInstance(document.getElementById('modalEditar')).hide();
+            buscarReservas();
+        } else {
+            mostrarAlerta(texto, 'danger');
+        }
+    } catch (err) {
+        mostrarAlerta('Error de conexión: ' + err.message, 'danger');
+    }
+});
 
 document.getElementById('btnBuscar').addEventListener('click', buscarReservas);
 document.getElementById('inputBusqueda').addEventListener('keydown', function (e) {
